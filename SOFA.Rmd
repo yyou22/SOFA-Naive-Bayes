@@ -2,6 +2,9 @@
 title: "MIMIC-III SOFA & APACHE Analysis"
 author: "<h3><p>Yuzhe You</p><p>vyou@umich.edu</p></h3>"
 date: "`r format(Sys.time(), '%B %Y')`"
+header-includes:
+  - \usepackage{fvextra}
+  - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}
 output:
   html_document:
     highlight: tango
@@ -44,16 +47,16 @@ set.seed(123456)
 
 The sequential organ failure assessment score (SOFA score), previously known as the sepsis-related organ failure assessment score, is used to track a person's status during the stay in an intensive care unit (ICU) to determine the extent of a person's organ function or rate of failure. The score is based on six different scores, one each for the respiratory, cardiovascular, hepatic, coagulation, renal and neurological systems.
 
-```{r message=F, warning=F, out.width = "350px"}
+```{r message=F, warning=F, out.width = "300px"}
 knitr::include_graphics("sofa-1.png")
 ```
-```{r message=F, warning=F, out.width = "300px"}
+```{r message=F, warning=F, out.width = "250px"}
 knitr::include_graphics("sofa-2.png")
 ```
-```{r message=F, warning=F}
+```{r message=F, warning=F, out.width = "620px"}
 knitr::include_graphics("sofa-3.png")
 ```
-```{r message=F, warning=F, out.width = "300px"}
+```{r message=F, warning=F, out.width = "250px"}
 knitr::include_graphics("sofa-4.png")
 knitr::include_graphics("sofa-5.png")
 ```
@@ -186,7 +189,8 @@ kable(head(cohort_data), caption="cohort_data") %>%
 
 ## Extract Systolic blood pressure
 
-`Select subject_id, valuenum from chartevents where itemid = 51 or  itemid = 442 or  itemid = 455 or  itemid = 6701 or  itemid = 220197 or  itemid = 220050 or itemid = 456 or itemid = 52 or itemid = 6702 or itemid = 443 or itemid = 220052 or itemid = 220181 or itemid = 225312`
+`Select subject_id, valuenum from chartevents `
+`where itemid in (51, 442, 455, 6701, 220197, 220050, 456, 52, 6702, 443, 220052, 220181, 225312)`
 
 ```{r message=F, warning=F}
 SBP_1 <- read.csv('SBP.csv')
@@ -217,7 +221,8 @@ kable(head(cohort_data), caption="cohort_data") %>%
 
 ## Extract Respiratory Rate
 
-`Select subject_id, valuenum from chartevents where itemid = 220210 or itemid = 618 or itemid = 615 or itemid = 224690`
+`Select subject_id, valuenum `
+`from chartevents where itemid = 220210 or itemid = 618 or itemid = 615 or itemid = 224690`
 
 ```{r message=F, warning=F}
 RR <- read.csv('RR.csv')
