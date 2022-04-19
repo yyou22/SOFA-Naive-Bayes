@@ -1,0 +1,385 @@
+---
+title: "MIMIC-III SOFA & APACHE Analysis"
+author: "<h3><p>Yuzhe You</p><p>vyou@umich.edu</p></h3>"
+date: "`r format(Sys.time(), '%B %Y')`"
+output:
+  html_document:
+    highlight: tango
+    number_sections: yes
+    theme: default
+    toc: yes
+    toc_depth: 3
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+subtitle: <h2><u>Winter 2019, SOCR-MDP</u></h2>
+---
+
+**Libraries Used:**
+```{r message=F, warning=F}
+# Data I/O
+library('RPostgreSQL')    # access MIMIC-III
+library('reshape2')       # melting dataframes
+library('dplyr')          # misc. organization
+library('data.table')     
+
+# Data preparation
+library('psych')          # descriptive stats
+
+# Plots and tables
+library('knitr')          # knitting Rmd to HTML; kable() function
+library('kableExtra')     # extra formating options for knitr tables
+library('ggplot2')        # 2d plotting
+library('ggpubr')         # extra formatting options for ggplot
+```
+
+**Random Seed Set**
+```{r message=F, warning=F}
+set.seed(123456)
+```
+
+# Introduction
+
+## Background
+
+The sequential organ failure assessment score (SOFA score), previously known as the sepsis-related organ failure assessment score, is used to track a person's status during the stay in an intensive care unit (ICU) to determine the extent of a person's organ function or rate of failure. The score is based on six different scores, one each for the respiratory, cardiovascular, hepatic, coagulation, renal and neurological systems.
+
+```{r message=F, warning=F, out.width = "350px"}
+knitr::include_graphics("sofa-1.png")
+```
+```{r message=F, warning=F, out.width = "300px"}
+knitr::include_graphics("sofa-2.png")
+```
+```{r message=F, warning=F}
+knitr::include_graphics("sofa-3.png")
+```
+```{r message=F, warning=F, out.width = "300px"}
+knitr::include_graphics("sofa-4.png")
+knitr::include_graphics("sofa-5.png")
+```
+```{r message=F, warning=F, out.width = "400px"}
+knitr::include_graphics("sofa-6.png")
+```
+
+## Quick SOFA Score
+
+The Quick SOFA Score (quickSOFA or qSOFA) was introduced by the Sepsis-3 group in February 2016 as a simplified version of the SOFA Score as an initial way to identify patients at high risk for poor outcome with an infection. The SIRS Criteria definitions of sepsis are being replaced as they were found to possess too many limitations; the “current use of 2 or more SIRS criteria to identify sepsis was unanimously considered by the task force to be unhelpful.” The qSOFA simplifies the SOFA score drastically by only including its 3 clinical criteria and by including "any altered mentation" instead of requiring a GCS <15. qSOFA can easily and quickly be repeated serially on patients.
+
+```{r message=F, warning=F, out.width = "400px"}
+knitr::include_graphics("quick sofa.png")
+```
+
+The score ranges from 0 to 3 points. The presence of 2 or more qSOFA points near the onset of infection was associated with a greater risk of death or prolonged intensive care unit stay. These are outcomes that are more common in infected patients who may be septic than those with uncomplicated infection. Based upon these findings, the Third International Consensus Definitions for Sepsis recommends qSOFA as a simple prompt to identify infected patients outside the ICU who are likely to be septic.
+
+Source: https://en.wikipedia.org/wiki/SOFA_score
+
+# Data extraction and manipulation
+
+## Load the data
+
+First, we are going to generate a list of patient ID included in the dataset.
+
+`SELECT subject_id FROM diagnoses_icd`
+
+```{r message=F, warning=F}
+subject_id_list <- read.csv('subject_id.csv')
+subject_id_list = unique(subject_id_list$subject_id)
+```
+
+After generating a list of subjects, we can extract the various diagnoses associated with them.
+
+`SELECT * FROM d_icd_diagnoses`
+
+```{r message=F, warning=F}
+d_icd_diagnoses <- read.csv('d_icd_diagnosis.csv')
+kable(head(d_icd_diagnoses), caption="Sample of `D_ICD_DIAGNOSES` SQL table") %>%
+  kable_styling(bootstrap_options='striped')
+```
+
+Next, we can obtain a dataframe containing the diagnosis information for each patient.
+
+`SELECT * FROM diagnoses_icd WHERE row_id in (SELECT row_id FROM d_icd_diagnosis)`
+
+```{r message=F, warning=F}
+diagnosis_icd <- read.csv('diagnoses_icd.csv')
+cohort_data <- diagnosis_icd %>% group_by(subject_id) %>% 
+summarize(icd9_code = paste(sort(unique(icd9_code)),collapse=", "))
+kable(head(cohort_data), caption="Sample dataframe returned by the DIAGNOSES_ICD table.") %>%
+  kable_styling(bootstrap_options='striped')
+```
+
+## Screen the patients
+
+We'll screen the patients based on their ICD9 codes to identify those with sepsis based on a post in <a href=https://stackoverflow.com/questions/50672316/r-test-if-a-string-vector-contains-any-element-of-another-list>Stack Overflow</a>. The codes for sepsis, severe sepsis, and septic shock are 99591, 99592, and 78552 respectively.
+
+```{r eval=T, message=F, warning=F}
+# Search for septic patients
+search_patterns = paste(c(99591, 99592, 78552), collapse="|")
+
+for (i in 1:nrow(cohort_data)){
+  cohort_data$septic[i] <- grepl(search_patterns, cohort_data[i, 'icd9_code'])
+}
+
+kable(head(cohort_data), caption="Sample of cohort data from Part 1 after searching for sepsis diagnosis.") %>%
+  kable_styling(bootstrap_options='striped')
+```
+
+## Extract GCS (Glasgow Coma Scale)
+
+Extract motor response:
+
+```{r message=F, warning=F}
+Motor <- read.csv('GCS Motor.csv')
+Motor_2 <- read.csv('GCS_Motor 2.csv')
+Motor <- rbind(Motor, Motor_2)
+Motor <- Motor[!duplicated(Motor$subject_id),]
+kable(head(Motor), caption="Motor Response") %>%
+  kable_styling(bootstrap_options='striped')
+```
+
+Extract verbal response:
+```{r message=F, warning=F}
+Verbal <- read.csv('GCS Verbal.csv')
+Verbal_2 <- read.csv('GCS_Verbal 2.csv')
+Verbal <- rbind(Verbal, Verbal_2)
+Verbal <- Verbal[!duplicated(Verbal$subject_id),]
+kable(head(Verbal), caption="Verbal Response") %>%
+  kable_styling(bootstrap_options='striped')
+```
+
+Extract eyes response:
+```{r message=F, warning=F}
+Eyes <- read.csv('GCS Eyes.csv')
+Eyes_2 <- read.csv('GCS_Eyes 2.csv')
+Eyes <- rbind(Eyes, Eyes_2)
+Eyes <- Eyes[!duplicated(Eyes$subject_id),]
+kable(head(Eyes), caption="Eyes Response") %>%
+  kable_styling(bootstrap_options='striped')
+```
+
+Merge GCS Responses
+```{r message=F, warning=F}
+GCS_data <- merge(Motor, Verbal, by=c('subject_id'), all=T)
+GCS_data <- merge(GCS_data, Eyes, by=c('subject_id'), all=T)
+colnames(GCS_data)[2] <- "Motor"
+colnames(GCS_data)[3] <- "Verbal"
+colnames(GCS_data)[4] <- "Eyes"
+GCS_data = GCS_data[complete.cases(GCS_data),]
+kable(head(GCS_data), caption="GCS") %>%
+  kable_styling(bootstrap_options='striped')
+```
+
+```{r message=F, warning=F}
+for (i in 1:nrow(GCS_data)) {
+  GCS_data$GCS[i] <- sum(as.numeric(GCS_data$Motor[i]), as.numeric(GCS_data$Verbal[i]), as.numeric(GCS_data$Eyes[i]))
+}
+kable(head(GCS_data), caption="GCS") %>%
+  kable_styling(bootstrap_options='striped')
+```
+
+Merge the GCS data with `cohort_data`
+```{r message=F, warning=F}
+cohort_data <- merge(cohort_data, GCS_data[,c('subject_id', 'GCS')], by=c('subject_id'), all=T)
+kable(head(cohort_data), caption="cohort_data") %>%
+  kable_styling(bootstrap_options='striped')
+```
+
+## Extract Systolic blood pressure
+
+`Select subject_id, valuenum from chartevents where itemid = 51 or  itemid = 442 or  itemid = 455 or  itemid = 6701 or  itemid = 220197 or  itemid = 220050 or itemid = 456 or itemid = 52 or itemid = 6702 or itemid = 443 or itemid = 220052 or itemid = 220181 or itemid = 225312`
+
+```{r message=F, warning=F}
+SBP_1 <- read.csv('SBP.csv')
+SBP_2 <- read.csv('NBP Mean.csv')
+SBP_3 <- read.csv('SBP_2.csv')
+SBP_4 <- read.csv('Arterial BP Mean.csv')
+SBP_5 <- read.csv('Arterial BP Mean #2.csv')
+SBP_6 <- read.csv('SBP 2.csv')
+SBP_7 <- read.csv('SBP 3.csv')
+SBP <- rbind(SBP_1, SBP_2)
+SBP <- rbind(SBP, SBP_3)
+SBP <- rbind(SBP, SBP_4)
+SBP <- rbind(SBP, SBP_5)
+SBP <- rbind(SBP, SBP_6)
+SBP <- rbind(SBP, SBP_7)
+SBP <- SBP[!duplicated(SBP$subject_id),]
+colnames(SBP)[2] <- "SBP"
+kable(head(SBP), caption="SBP") %>%
+  kable_styling(bootstrap_options='striped')
+```
+
+Merge the SBP data with `cohort_data`
+```{r message=F, warning=F}
+cohort_data <- merge(cohort_data, SBP[,c('subject_id', 'SBP')], by=c('subject_id'), all=T)
+kable(head(cohort_data), caption="cohort_data") %>%
+  kable_styling(bootstrap_options='striped')
+```
+
+## Extract Respiratory Rate
+
+`Select subject_id, valuenum from chartevents where itemid = 220210 or itemid = 618 or itemid = 615 or itemid = 224690`
+
+```{r message=F, warning=F}
+RR <- read.csv('RR.csv')
+RR_1 <- read.csv('RR_total.csv')
+RR_2 <- read.csv('RR_total_2.csv')
+RR_3 <- read.csv('RR_2.csv')
+RR <- rbind(RR, RR_1)
+RR <- rbind(RR, RR_2)
+RR <- rbind(RR, RR_3)
+RR <- RR[!duplicated(RR$subject_id),]
+colnames(RR)[2] <- "respiratory_rate"
+kable(head(RR), caption="Respiratory Rate") %>%
+  kable_styling(bootstrap_options='striped')
+```
+
+Merge the Respiratory Rate data with `cohort_data`
+```{r message=F, warning=F}
+cohort_data <- merge(cohort_data, RR[,c('subject_id', 'respiratory_rate')], by=c('subject_id'), all=T)
+kable(head(cohort_data), caption="cohort_data") %>%
+  kable_styling(bootstrap_options='striped')
+```
+
+## Prepare data
+
+Withe all the variables we need for quick SOFA score, we'll choose to remove rows that contain missing variables in order to make visualization and exploratory data analysis easier.
+
+```{r eval=T, message=F, warning=F}
+cohort_data = cohort_data[complete.cases(cohort_data),]
+kable(head(cohort_data), caption="cohort_data") %>%
+  kable_styling(bootstrap_options='striped')
+```
+
+## Calculate qSOFA score
+
+```{r message=F, warning=F, out.width = "400px"}
+knitr::include_graphics("quick sofa.png")
+```
+
+```{r eval=T, message=F, warning=F}
+for (i in 1:nrow(cohort_data)) {
+  cohort_data$qSOFA[i] <-sum(as.numeric(cohort_data$SBP[i] <= 100),
+                                  as.numeric(cohort_data$respiratory_rate[i] >= 22),
+                                  as.numeric(cohort_data$GCS[i] <= 14))
+}
+kable(head(cohort_data), caption="cohort_data") %>%
+  kable_styling(bootstrap_options='striped')
+```
+
+
+# Model Training - qSOFA
+
+To prepare the data for our classifier, we are going to divide the dataset into training and test datasets.
+```{r eval=T, message=F, warning=F}
+set.seed(12345)
+subset_int <- sample(nrow(cohort_data), floor(nrow(cohort_data)*0.6))
+# 60% training + 40% testing
+cohort_data_train <- cohort_data[subset_int, ]
+cohort_data_test <- cohort_data[-subset_int, ]
+```
+
+Let's examine the distribution of sepsis in the training and test datasets.
+```{r eval=T, message=F, warning=F}
+prop.table(table(cohort_data_train$septic))
+```
+
+```{r eval=T, message=F, warning=F}
+prop.table(table(cohort_data_test$septic))
+```
+
+The package we are going to use for Naive Bayes classifier is called `e1071`.
+For our first model training, we are going to train the model using the qSOFA score
+```{r eval=T, message=F, warning=F}
+# install.packages("e1071", repos = "http://cran.us.r-project.org")
+library(e1071)
+# build the classifier
+classifier <- naiveBayes(cohort_data_train[,c("qSOFA")], as.factor(cohort_data_train$septic))
+```
+
+The function `naiveBayes()` has following components:
+`m <- naiveBayes(train, class, laplace=0)`
+
+  * train: data frame containing numeric training data (features)
+  + class: factor vector with the class for each row in the training data
+  + laplace: positive double controlling Laplace smoothing; default is 0 and disables Laplace smoothing.
+
+```{r eval=T, message=F, warning=F}
+# use the classifier to make predictions
+pred <- predict(classifier, cohort_data_test)
+```
+
+The function `predict()` has the following components:
+`p <- predict(m, test, type = "class")`
+
+  * m: classifier trained by `naiveBayes()`
+  + test: test data frame or matric
+  + type: either `"class"` or `"raw"` specifies whether the predictions should be the most likely class value or the raw predicted probabilities.
+
+
+## Evaluate model performance
+
+Here we are using cross table to compare predicted class and the true class of our test dataset.
+
+The package we are using for model performance evaluation is called `gmodels`.
+```{r eval=T, message=F, warning=F}
+#install.packages(c("gmodels"))
+library(gmodels)
+```
+
+```{r eval=T, message=F, warning=F}
+CrossTable(pred, cohort_data_test$septic)
+```
+
+The model fails to predict anyone that's septic as true.
+
+Accuracy: 35/42 = 83.3%
+
+# Model Training - GCS, SBP, respiratory rate
+
+```{r eval=T, message=F, warning=F}
+# install.packages("e1071", repos = "http://cran.us.r-project.org")
+library(e1071)
+# build the classifier
+classifier <- naiveBayes(cohort_data_train[,c("GCS", "SBP", "respiratory_rate")], as.factor(cohort_data_train$septic))
+```
+
+The function `naiveBayes()` has following components:
+`m <- naiveBayes(train, class, laplace=0)`
+
+  * train: data frame containing numeric training data (features)
+  + class: factor vector with the class for each row in the training data
+  + laplace: positive double controlling Laplace smoothing; default is 0 and disables Laplace smoothing.
+
+```{r eval=T, message=F, warning=F}
+# use the classifier to make predictions
+pred <- predict(classifier, cohort_data_test)
+```
+
+The function `predict()` has the following components:
+`p <- predict(m, test, type = "class")`
+
+  * m: classifier trained by `naiveBayes()`
+  + test: test data frame or matric
+  + type: either `"class"` or `"raw"` specifies whether the predictions should be the most likely class value or the raw predicted probabilities.
+
+
+## Evaluate model performance
+
+Here we are using cross table to compare predicted class and the true class of our test dataset.
+
+The package we are using for model performance evaluation is called `gmodels`.
+```{r eval=T, message=F, warning=F}
+#install.packages(c("gmodels"))
+library(gmodels)
+```
+
+```{r eval=T, message=F, warning=F}
+CrossTable(pred, cohort_data_test$septic)
+```
+
+The model still fails to predict anyone that's septic as true, possibly due to the even distribution of septic patients in the training dataset, or an indicator that judging from the SOFA score alone is insufficient to diagnose the patients. More feature columns may need to be taken account in future studies to improve the model's performance to accurately predict whether a patient is septic or not.
+
+Accuracy: 35/42 = 83%
+
+Note: A follow-up study is done by constructing a Naive Bayes classifier with SIRS score along with other features to improve model performance. See the follow-up study here: [SIRS-Naive-Bayes] (https://yyyyyyou.github.io/SIRS-Naive-Bayes/)
+
